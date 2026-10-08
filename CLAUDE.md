@@ -10,6 +10,12 @@ Firefox WebExtension (Manifest V2) that overlays `.srt`/`.vtt` subtitles on any 
 
 Load it unpacked in Firefox: `about:debugging#/runtime/this-firefox` → "Load Temporary Add-on…" → choose `manifest.json`. Reload from the same page after editing. Bump `version` in `manifest.json` for a release.
 
+Package for AMO submission (writes `web-ext-artifacts/add_subtitles-<version>.zip`):
+
+```sh
+npx web-ext build --ignore-files CLAUDE.md
+```
+
 ## Architecture
 
 - `background_script.js`: on toolbar-button click, injects `content_scripts/jszip.min.js` (vendored, do not edit), then `content_scripts/add_subtitles.js`, into every frame of the active tab (`allFrames`). Nothing is declared under `content_scripts` in the manifest; injection only happens on click. Subframes with no `<video>` bail out before building any UI.
