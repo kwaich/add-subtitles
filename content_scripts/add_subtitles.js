@@ -6,8 +6,9 @@ if(window.has_run){
     menu.style.display = menu.style.display == "none" ? "inline-block" : "none";
     return;
 }
-// Injected into every frame: only show the menu in subframes that have a video
-if(window !== window.top && document.getElementsByTagName("video").length == 0) return;
+// Injected into every frame: skip frames without a video, unless it's a top page with no iframes (so the menu can say none were found)
+if(document.getElementsByTagName("video").length == 0 &&
+   (window !== window.top || document.getElementsByTagName("iframe").length > 0)) return;
 window.has_run = true;
 
 var subtitle_element = document.createElement("div");
@@ -90,7 +91,11 @@ button{
     position: fixed;
     right: 14px;
     bottom: 14px;
-    width: 430px;
+    box-sizing: border-box;
+    width: 462px;
+    max-width: calc(100vw - 28px);
+    max-height: calc(100vh - 28px);
+    overflow: auto;
     border: 1px solid black;
     padding-left: 14px;
     padding-right: 16px;

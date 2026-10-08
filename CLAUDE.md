@@ -18,7 +18,7 @@ npx web-ext build --ignore-files CLAUDE.md
 
 ## Architecture
 
-- `background_script.js`: on toolbar-button click, injects `content_scripts/jszip.min.js` (vendored, do not edit), then `content_scripts/add_subtitles.js`, into every frame of the active tab (`allFrames`). Nothing is declared under `content_scripts` in the manifest; injection only happens on click. Subframes with no `<video>` bail out before building any UI.
+- `background_script.js`: on toolbar-button click, injects `content_scripts/jszip.min.js` (vendored, do not edit), then `content_scripts/add_subtitles.js`, into every frame of the active tab (`allFrames`). Nothing is declared under `content_scripts` in the manifest; injection only happens on click. Frames with no `<video>` bail out before building any UI (except a top page with no iframes, which shows "No video elements found"), so the menu appears inside the frame that holds the video.
 - `content_scripts/add_subtitles.js`: the whole extension, one IIFE.
   - **Re-injection guard**: every click re-runs the script. `window.has_run` makes later runs only toggle the menu's visibility and return early. Top-level state therefore lives for the page's lifetime.
   - **UI**: the settings menu is rendered inside a shadow root (`#shadow_host`) so page CSS can't affect it. Look elements up with `shadow_root.getElementById`, not `document`. The subtitle overlay (`#subtitle_element`) and its styles live in the page's light DOM, positioned absolutely over the chosen video (`fixed` in the custom "fullscreen" mode, which restyles the page instead of fullscreening the video). On `fullscreenchange` the overlay is moved into `document.fullscreenElement` (only that subtree renders) and back to `<body>` on exit.
