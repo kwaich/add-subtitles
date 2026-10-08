@@ -48,7 +48,8 @@ menu.innerHTML = `
             Or from URL (zip supported): <input type="text" id="subtitle_url_input" autocomplete="off">
         </div>
         <div class="line">
-            <button id="subtitle_upload_button">Upload</button> <span id="upload_error_message"></span>
+            <button id="subtitle_upload_button">Upload</button> <button id="forget_saved_urls">Forget all saved URLs</button>
+            <span id="upload_error_message"></span>
         </div>
         <div class="line">
             Or search subtitlecat.com: <input type="text" id="subtitlecat_search_input" autocomplete="off">
@@ -221,6 +222,7 @@ function update_video_elements_list(){
                 }
                 else{
                     the_video_element = current_video_element;
+                    update_native_track();
                     this.classList.add("selected_video_list");
                 }
             });
@@ -261,9 +263,16 @@ function allow_tags(input, tags){
 
 var allowed_html_tags = ["b", "i", "u", "br"]
 
+var normal_video_height = 0;
+
 setInterval(function(){
     if(subtitles.length == 0 || the_video_element == null) return;
     var t = the_video_element.currentTime;
+    // The font size is in px, so in fullscreen scale it by how much the video grew
+    if(!document.fullscreenElement && !video_fullscreen && the_video_element.offsetHeight > 0){
+        normal_video_height = the_video_element.offsetHeight;
+    }
+    var font_scale = normal_video_height ? the_video_element.offsetHeight/normal_video_height : 1;
     var found = -1;
     for(var i = 0; i < subtitles.length; i++){
         if(subtitles[i].begin+subtitle_offset <= t && subtitles[i].end+subtitle_offset >= t){
@@ -281,7 +290,7 @@ setInterval(function(){
             subtitle_line.innerHTML = allow_tags(xss(subtitles[found].text[i]), allowed_html_tags);
             subtitle_line.className = "subtitle_line";
             subtitle_line.style.cssText = "font-family: "+subtitle_font+
-                ";font-size: "+subtitle_font_size+
+                ";font-size: "+subtitle_font_size*font_scale+
                 "px;color:"+subtitle_font_color+
                 ";background-color:"+subtitle_background_color+";";
             subtitle_element.appendChild(subtitle_line);
@@ -357,6 +366,28 @@ function parse_subtitles(subs){
         }
         subtitles.push({begin: time_parse(time[0]), end: time_parse(time[1]), text: text});
     }
+    update_native_track();
+}
+
+// The overlay can't be drawn over a <video> that is itself fullscreen, but the browser still renders
+// the video's own text tracks there. So the selected video also gets a native track with the same cues,
+// kept "hidden" (loaded, not drawn) except during that kind of fullscreen. It uses the browser's cue style.
+var native_tracks = new WeakMap();
+
+function update_native_track(){
+    if(the_video_element == null) return;
+    var track = native_tracks.get(the_video_element);
+    if(!track){
+        track = the_video_element.addTextTrack("subtitles", "Add Subtitles");
+        native_tracks.set(the_video_element, track);
+    }
+    // A disabled track has no cue list; players sometimes disable tracks they didn't create
+    if(track.mode == "disabled") track.mode = "hidden";
+    while(track.cues.length > 0) track.removeCue(track.cues[0]);
+    subtitles.forEach(function(cue){
+        // VTTCue text is parsed as WebVTT (<b>, <i>, <u> work natively), never as HTML
+        track.addCue(new VTTCue(cue.begin+subtitle_offset, cue.end+subtitle_offset, cue.text.join("\n").replace(/<br>/g, "\n")));
+    });
 }
 
 var fullscreen_restore = null;
@@ -413,6 +444,8 @@ document.addEventListener("fullscreenchange", function(){
     if(!fullscreen_element && video_fullscreen){
         exit_fullscreen_video();
     }
+    var track = the_video_element && native_tracks.get(the_video_element);
+    if(track) track.mode = fullscreen_element && fullscreen_element == the_video_element ? "showing" : "hidden";
 });
 
 update_video_elements_list();
@@ -426,11 +459,27 @@ shadow_root.getElementById("show_hidden_videos").addEventListener("change", func
     update_video_elements_list();
 });
 
+// The last subtitle URL that loaded on this page, reloaded when the menu opens here again.
+// Local files have no URL to save; loading one forgets the page's URL.
+var saved_url_key = "subtitle_url:"+location.href.split("#")[0];
+
+browser.storage.local.get(saved_url_key).then(function(saved){
+    if(!saved[saved_url_key]) return;
+    shadow_root.getElementById("subtitle_url_input").value = saved[saved_url_key];
+    shadow_root.getElementById("subtitle_upload_button").click();
+});
+
+shadow_root.getElementById("forget_saved_urls").addEventListener("click", function(){
+    browser.storage.local.clear();
+    this.textContent = "Forgotten";
+});
+
 shadow_root.getElementById("subtitle_upload_button").addEventListener("click", function(){
     var subtitle_url_input = shadow_root.getElementById("subtitle_url_input");
     shadow_root.getElementById("upload_error_message").textContent = "";
-    if(subtitle_url_input.value.length > 0){
-        fetch(subtitle_url_input.value, {
+    var subtitle_url = subtitle_url_input.value;
+    if(subtitle_url.length > 0){
+        fetch(subtitle_url, {
             method: "GET"
         }).then(response => {
             if(response.status == 200){
@@ -464,6 +513,7 @@ shadow_root.getElementById("subtitle_upload_button").addEventListener("click", f
             return new TextDecoder().decode(buffer);
         }).then(text => {
             parse_subtitles(text);
+            browser.storage.local.set({[saved_url_key]: subtitle_url});
         }).catch((error) => {
             shadow_root.getElementById("upload_error_message").textContent = error;
         });
@@ -482,6 +532,7 @@ function load_subtitle_file(){
     var file_reader = new FileReader();
     file_reader.onload = function(event){
         parse_subtitles(event.target.result);
+        browser.storage.local.remove(saved_url_key);
     }
     file_reader.onerror = function(event){
         shadow_root.getElementById("upload_error_message").textContent = file_reader.error;
@@ -585,6 +636,7 @@ shadow_root.getElementById("subtitlecat_search_input").addEventListener("keydown
 shadow_root.getElementById("subtitle_offset_input").addEventListener("input", function(){
     // An empty or half-typed field ("-") reads as NaN, which would hide every cue
     subtitle_offset = parseFloat(shadow_root.getElementById("subtitle_offset_input").value) || 0;
+    update_native_track();
 });
 
 shadow_root.getElementById("subtitle_offset_top_input").addEventListener("input", function(){
@@ -617,6 +669,16 @@ shadow_root.getElementById("close_button").addEventListener("click", function(){
 
 document.addEventListener("keydown", function(event){
     if(event.key == "Escape") menu.style.display = "none";
+});
+
+// Shadow DOM retargets event.target to the host <div>, so page shortcut handlers (player keys like
+// f, k, space) can't tell the user is typing in an input and swallow the keys. Keep them in the menu.
+// ponytail: page listeners in the capture phase still run first; nothing an injected script can do about those.
+["keydown", "keypress", "keyup"].forEach(function(type){
+    menu.addEventListener(type, function(event){
+        event.stopPropagation();
+        if(type == "keydown" && event.key == "Escape") menu.style.display = "none";
+    });
 });
 
 })();
