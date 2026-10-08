@@ -41,7 +41,8 @@ menu.innerHTML = `
     <fieldset>
         <legend>Subtitles file:</legend>
         <div class="line">
-            Upload file: <input type="file" accept=".srt,.vtt" id="subtitle_file_input" autocomplete="off">
+            Upload file: <input type="file" accept=".srt,.vtt" id="subtitle_file_input" autocomplete="off" hidden>
+            <button id="subtitle_browse_button">Browse...</button> <span id="subtitle_file_name">No file selected</span>
         </div>
         <div class="line">
             Or from URL (zip supported): <input type="text" id="subtitle_url_input" autocomplete="off">
@@ -49,6 +50,12 @@ menu.innerHTML = `
         <div class="line">
             <button id="subtitle_upload_button">Upload</button> <span id="upload_error_message"></span>
         </div>
+        <div class="line">
+            Or search subtitlecat.com: <input type="text" id="subtitlecat_search_input" autocomplete="off">
+            <select id="subtitlecat_language"><option value="en">English</option><option value="">Any language</option></select>
+            <button id="subtitlecat_search_button">Search</button>
+        </div>
+        <div id="subtitlecat_results"></div>
     </fieldset>
 </div>
 <div class="line">
@@ -116,12 +123,6 @@ button:hover{
 button:active{
     background-color: #ddd;
 }
-input[type="file"]{
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    width: 100%;
-}
 input:not([type="file"]):not([type="checkbox"]){
     border: 1px solid black;
     height: 18px;
@@ -139,6 +140,11 @@ input:not([type="file"]):not([type="checkbox"]){
     margin-top: -1px;
     padding: 3px;
     cursor: pointer;
+}
+#subtitlecat_results{
+    max-height: 150px;
+    overflow-y: auto;
+    margin-top: 6px;
 }
 #video_elements_list .selected_video_list, #video_elements_list .hover_video_list{
     border: 2px solid red;
@@ -483,9 +489,97 @@ function load_subtitle_file(){
     file_reader.readAsText(subtitle_file);
 }
 
+// The native file input is hidden so only the Browse button (not the whole row) opens the picker
+shadow_root.getElementById("subtitle_browse_button").addEventListener("click", function(){
+    shadow_root.getElementById("subtitle_file_input").click();
+});
+
 shadow_root.getElementById("subtitle_file_input").addEventListener("change", function(){
+    shadow_root.getElementById("subtitle_file_name").textContent = this.files[0] ? this.files[0].name : "No file selected";
     shadow_root.getElementById("upload_error_message").textContent = "";
     load_subtitle_file();
+});
+
+// Scrapes subtitlecat.com's HTML: search results page -> subtitle page -> per-language .srt link.
+// Only text is copied out of the fetched pages, never markup.
+function fetch_subtitlecat_page(url){
+    return fetch(url).then(response => {
+        if(response.status != 200) throw new Error("Request failed");
+        return response.text();
+    }).then(html => new DOMParser().parseFromString(html, "text/html"));
+}
+
+function show_subtitlecat_items(items, on_click){
+    var results = shadow_root.getElementById("subtitlecat_results");
+    results.textContent = items.length == 0 ? "Nothing found" : "";
+    items.forEach(function(item){
+        var div = document.createElement("div");
+        div.className = "video_list_item";
+        div.textContent = item.text;
+        div.title = item.text;
+        div.addEventListener("click", function(){ on_click(item.url); });
+        results.append(div);
+    });
+}
+
+function subtitlecat_error(error){
+    shadow_root.getElementById("subtitlecat_results").textContent = "";
+    shadow_root.getElementById("upload_error_message").textContent = error;
+}
+
+function load_subtitlecat_srt(srt_url){
+    shadow_root.getElementById("subtitle_url_input").value = srt_url;
+    shadow_root.getElementById("subtitle_upload_button").click();
+}
+
+function show_subtitlecat_languages(url){
+    shadow_root.getElementById("subtitlecat_results").textContent = "Loading...";
+    fetch_subtitlecat_page(url).then(doc => {
+        // Languages with a "Translate" button are generated on demand by the site's JS; only list ready-made files
+        var links = Array.from(doc.querySelectorAll('.sub-single a[id^="download_"]'));
+        show_subtitlecat_items(links.map(a => ({
+            text: a.closest(".sub-single").querySelectorAll("span")[1].textContent.trim(),
+            url: new URL(a.getAttribute("href"), url).href
+        })), load_subtitlecat_srt);
+    }).catch(subtitlecat_error);
+}
+
+var subtitlecat_language = shadow_root.getElementById("subtitlecat_language");
+
+shadow_root.getElementById("subtitlecat_search_button").addEventListener("click", function(){
+    var query = shadow_root.getElementById("subtitlecat_search_input").value.trim();
+    var results = shadow_root.getElementById("subtitlecat_results");
+    if(query.length == 0){
+        results.textContent = "";
+        shadow_root.getElementById("upload_error_message").textContent = "Enter a title to search";
+        return;
+    }
+    var language = subtitlecat_language.value;
+    shadow_root.getElementById("upload_error_message").textContent = "";
+    results.textContent = "Searching...";
+    var search_url = "https://www.subtitlecat.com/index.php?search="+encodeURIComponent(query);
+    fetch_subtitlecat_page(search_url).then(doc => {
+        var releases = Array.from(doc.querySelectorAll(".sub-table tbody td:first-child a")).map(a => ({
+            text: a.parentElement.textContent.trim(),
+            url: new URL(a.getAttribute("href"), search_url).href
+        }));
+        if(language == ""){
+            show_subtitlecat_items(releases, show_subtitlecat_languages);
+            return;
+        }
+        // The search page doesn't say which languages a release has, so open every release page
+        results.textContent = "Checking "+releases.length+" results for English...";
+        return Promise.all(releases.map(release => fetch_subtitlecat_page(release.url).then(page => {
+            var link = page.getElementById("download_"+language);
+            return link && {text: release.text, url: new URL(link.getAttribute("href"), release.url).href};
+        }))).then(found => {
+            show_subtitlecat_items(found.filter(Boolean), load_subtitlecat_srt);
+        });
+    }).catch(subtitlecat_error);
+});
+
+shadow_root.getElementById("subtitlecat_search_input").addEventListener("keydown", function(event){
+    if(event.key == "Enter") shadow_root.getElementById("subtitlecat_search_button").click();
 });
 
 shadow_root.getElementById("subtitle_offset_input").addEventListener("input", function(){
@@ -519,6 +613,10 @@ shadow_root.getElementById("make_video_fullscreen").addEventListener("click", fu
 
 shadow_root.getElementById("close_button").addEventListener("click", function(){
     menu.style.display = "none";
+});
+
+document.addEventListener("keydown", function(event){
+    if(event.key == "Escape") menu.style.display = "none";
 });
 
 })();
