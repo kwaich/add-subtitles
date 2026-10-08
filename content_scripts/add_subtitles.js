@@ -12,6 +12,8 @@ else{
         document.getElementById("subtitle_element").outerHTML = "";
     }
 }
+// Injected into every frame: only show the menu in subframes that have a video
+if(window !== window.top && document.getElementsByTagName("video").length == 0) return;
 window.has_run = true;
 
 var subtitle_element = document.createElement("div");
@@ -33,6 +35,7 @@ menu.innerHTML = `
 <div class="line">
     List of video elements:
     <button id="refresh_video_list">Refresh List</button>
+    <label><input type="checkbox" id="show_hidden_videos"> Show hidden</label>
 </div>
 <div id="video_elements_list">
 </div>
@@ -120,7 +123,7 @@ input[type="file"]{
     text-overflow: ellipsis;
     width: 100%;
 }
-input:not([type="file"]){
+input:not([type="file"]):not([type="checkbox"]){
     border: 1px solid black;
     height: 18px;
     width: 200px;
@@ -175,7 +178,10 @@ document.getElementsByTagName("head")[0].appendChild(style);
 var the_video_element = null;
 
 function update_video_elements_list(){
-    var video_elements = document.getElementsByTagName("video");
+    var show_hidden = shadow_root.getElementById("show_hidden_videos").checked;
+    var video_elements = Array.from(document.getElementsByTagName("video")).filter(function(video){
+        return show_hidden || video.offsetWidth > 0 || video.offsetHeight > 0;
+    });
     var video_elements_list = shadow_root.getElementById("video_elements_list");
     video_elements_list.innerHTML = "";
     if(video_elements.length == 0){
@@ -187,6 +193,9 @@ function update_video_elements_list(){
         var video_list_item = document.createElement("div");
         video_list_item.className = "video_list_item";
         video_list_item.textContent = video_elements[i].currentSrc;
+        if(video_elements[i] == the_video_element){
+            video_list_item.classList.add("selected_video_list");
+        }
         (function(){
             var current_video_element = video_elements[i];
             video_list_item.addEventListener("mouseenter", function(){
@@ -331,12 +340,12 @@ function parse_subtitles(subs){
     subs = subs.split("\n\n");
 
     for(var i = 0; i < subs.length; i++){
-        s = subs[i].split("\n");
+        var s = subs[i].split("\n");
         if(s.length <= 1) continue;
         var pos = s[0].indexOf(" --> ") > 0 ? 0 : (s[1].indexOf(" --> ") > 0 ? 1 : -1);
         if(pos <= -1) continue;
-        time = s[pos].split(" --> ");
-        text = [];
+        var time = s[pos].split(" --> ");
+        var text = [];
         for(var j = pos + 1; j < s.length; j++){
             text.push(s[j]);
         }
@@ -376,13 +385,26 @@ function switch_fullscreen_video(){
     the_video_element.style.height = "100%";
 }
 
+// Only the fullscreen element's subtree is rendered, so move the subtitles into it
+document.addEventListener("fullscreenchange", function(){
+    var fullscreen_element = document.fullscreenElement;
+    if(fullscreen_element && fullscreen_element != the_video_element){
+        fullscreen_element.appendChild(subtitle_element);
+    }
+    else{
+        document.body.appendChild(subtitle_element);
+    }
+});
+
 update_video_elements_list();
 shadow_root.getElementById("refresh_video_list").addEventListener("click", function(){
     update_video_elements_list();
 });
+shadow_root.getElementById("show_hidden_videos").addEventListener("change", function(){
+    update_video_elements_list();
+});
 
 shadow_root.getElementById("subtitle_upload_button").addEventListener("click", function(){
-    var subtitle_file_input = shadow_root.getElementById("subtitle_file_input");
     var subtitle_url_input = shadow_root.getElementById("subtitle_url_input");
     shadow_root.getElementById("upload_error_message").textContent = "";
     if(subtitle_url_input.value.length > 0){
@@ -428,19 +450,29 @@ shadow_root.getElementById("subtitle_upload_button").addEventListener("click", f
         });
     }
     else{
-        var subtitle_file = subtitle_file_input.files[0];
-        if(subtitle_file == undefined){
-            shadow_root.getElementById("upload_error_message").textContent = "No file selected";
-        }
-        var file_reader = new FileReader();
-        file_reader.onload = function(event){
-            parse_subtitles(event.target.result);
-        }
-        file_reader.onerror = function(event){
-            shadow_root.getElementById("upload_error_message").textContent = event;
-        }
-        file_reader.readAsText(subtitle_file);
+        load_subtitle_file();
     }
+});
+
+function load_subtitle_file(){
+    var subtitle_file = shadow_root.getElementById("subtitle_file_input").files[0];
+    if(subtitle_file == undefined){
+        shadow_root.getElementById("upload_error_message").textContent = "No file selected";
+        return;
+    }
+    var file_reader = new FileReader();
+    file_reader.onload = function(event){
+        parse_subtitles(event.target.result);
+    }
+    file_reader.onerror = function(event){
+        shadow_root.getElementById("upload_error_message").textContent = event;
+    }
+    file_reader.readAsText(subtitle_file);
+}
+
+shadow_root.getElementById("subtitle_file_input").addEventListener("change", function(){
+    shadow_root.getElementById("upload_error_message").textContent = "";
+    load_subtitle_file();
 });
 
 shadow_root.getElementById("subtitle_offset_input").addEventListener("input", function(){
