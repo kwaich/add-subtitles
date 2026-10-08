@@ -77,6 +77,9 @@ menu.innerHTML = `
 <div class="line">
     Background color: <input type="text" id="subtitle_background_color" value="rgba(0, 0, 0, 0.7)">
 </div>
+<div class="line">
+    <button id="reset_settings">Reset position and font</button>
+</div>
 `;
 shadow.appendChild(menu);
 
@@ -470,7 +473,10 @@ browser.storage.local.get(saved_url_key).then(function(saved){
 });
 
 shadow_root.getElementById("forget_saved_urls").addEventListener("click", function(){
-    browser.storage.local.clear();
+    // Not clear(): that would also wipe the saved style settings
+    browser.storage.local.get().then(function(all){
+        browser.storage.local.remove(Object.keys(all).filter(key => key.startsWith("subtitle_url:")));
+    });
     this.textContent = "Forgotten";
 });
 
@@ -657,6 +663,27 @@ shadow_root.getElementById("subtitle_background_color").addEventListener("input"
 
 shadow_root.getElementById("subtitle_font").addEventListener("input", function(){
     subtitle_font = this.value;
+});
+
+// Style settings are global, keyed by input id. Loading fires "input" so the handlers above update their variables.
+var saved_setting_ids = ["subtitle_offset_top_input", "subtitle_font_size", "subtitle_font", "subtitle_font_color", "subtitle_background_color"];
+browser.storage.local.get(saved_setting_ids).then(function(saved){
+    saved_setting_ids.forEach(function(id){
+        if(!(id in saved)) return;
+        shadow_root.getElementById(id).value = saved[id];
+        shadow_root.getElementById(id).dispatchEvent(new Event("input"));
+    });
+});
+saved_setting_ids.forEach(function(id){
+    shadow_root.getElementById(id).addEventListener("input", function(){
+        browser.storage.local.set({[id]: this.value});
+    });
+});
+shadow_root.getElementById("reset_settings").addEventListener("click", function(){
+    saved_setting_ids.forEach(function(id){
+        shadow_root.getElementById(id).value = shadow_root.getElementById(id).defaultValue;
+        shadow_root.getElementById(id).dispatchEvent(new Event("input"));
+    });
 });
 
 shadow_root.getElementById("make_video_fullscreen").addEventListener("click", function(){
