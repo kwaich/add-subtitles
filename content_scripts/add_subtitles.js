@@ -6,12 +6,6 @@ if(window.has_run){
     menu.style.display = menu.style.display == "none" ? "inline-block" : "none";
     return;
 }
-else{
-    if(document.getElementById("addsubtitle_menu") != null){
-        document.getElementById("addsubtitle_menu").outerHTML = "";
-        document.getElementById("subtitle_element").outerHTML = "";
-    }
-}
 // Injected into every frame: only show the menu in subframes that have a video
 if(window !== window.top && document.getElementsByTagName("video").length == 0) return;
 window.has_run = true;
@@ -185,8 +179,7 @@ function update_video_elements_list(){
     var video_elements_list = shadow_root.getElementById("video_elements_list");
     video_elements_list.innerHTML = "";
     if(video_elements.length == 0){
-        video_elements_list.innerHTML = `<div id=\"no_videos\">No video elements found.<br>
-        If your video is inside and iframe, press shift+right click on it then \"This Frame\" > \"Open Frame in New Tab\"</div>`;
+        video_elements_list.innerHTML = `<div id=\"no_videos\">No video elements found.</div>`;
         return;
     }
     for(var i = 0; i < video_elements.length; i++){
@@ -225,7 +218,6 @@ function update_video_elements_list(){
     }
 }
 
-var subtitle_element = document.getElementById("subtitle_element");
 var subtitle_offset = parseFloat(shadow_root.getElementById("subtitle_offset_input").value);
 var subtitle_offset_top = parseFloat(shadow_root.getElementById("subtitle_offset_top_input").value);
 
@@ -259,7 +251,7 @@ function allow_tags(input, tags){
 var allowed_html_tags = ["b", "i", "u", "br"]
 
 setInterval(function(){
-    if(subtitles.length == 0) return;
+    if(subtitles.length == 0 || the_video_element == null) return;
     var t = the_video_element.currentTime;
     var found = -1;
     for(var i = 0; i < subtitles.length; i++){
@@ -326,18 +318,20 @@ function subtitle_pos(){
     subtitle_element.style.zIndex = "99999";
 }
 
+// hh:mm:ss,ttt (SRT) or [hh:]mm:ss.ttt (VTT), possibly followed by VTT cue settings
 function time_parse(t){
-    var split = t.split(":");
-    var hours = split[0]*60*60;
-    var minutes = split[1]*60;
-    var seconds = parseFloat(t.split(":")[2].replace(",", "."));
-    return hours+minutes+seconds;
+    var split = t.trim().split(" ")[0].split(":");
+    var seconds = 0;
+    for(var i = 0; i < split.length; i++){
+        seconds = seconds*60+parseFloat(split[i].replace(",", "."));
+    }
+    return seconds;
 }
 
 function parse_subtitles(subs){
     subtitles.length = 0;
     subs = subs.replace(/\r/g, "");
-    subs = subs.split("\n\n");
+    subs = subs.split(/\n\s*\n/);
 
     for(var i = 0; i < subs.length; i++){
         var s = subs[i].split("\n");
@@ -347,18 +341,22 @@ function parse_subtitles(subs){
         var time = s[pos].split(" --> ");
         var text = [];
         for(var j = pos + 1; j < s.length; j++){
-            text.push(s[j]);
+            // Drop tags that won't be rendered (VTT <v Name>, <c.class>, SRT <font>) so they don't show as text
+            text.push(s[j].replace(/<(?!\/?(b|i|u|br)>)[^>]*>/g, ""));
         }
         subtitles.push({begin: time_parse(time[0]), end: time_parse(time[1]), text: text});
     }
 }
 
+var fullscreen_restore = null;
+
 function switch_fullscreen_video(){
-    if(the_video_element == null) return;
+    if(the_video_element == null || video_fullscreen) return;
 
     document.documentElement.requestFullscreen();
 
     video_fullscreen = true;
+    fullscreen_restore = [the_video_element, the_video_element.style.cssText, document.documentElement.style.overflow];
 
     if(!document.getElementById("fullscreen_video_black_background")){
         var black_background = document.createElement("div");
@@ -375,7 +373,7 @@ function switch_fullscreen_video(){
         document.body.append(black_background);
     }
 
-    document.getElementById("subtitle_element").style.zIndex = "99999";
+    subtitle_element.style.zIndex = "99999";
     document.documentElement.style.overflow = "hidden";
     the_video_element.style.position = "fixed";
     the_video_element.style.top = "0px";
@@ -383,6 +381,13 @@ function switch_fullscreen_video(){
     the_video_element.style.zIndex = "99998";
     the_video_element.style.width = "100%";
     the_video_element.style.height = "100%";
+}
+
+function exit_fullscreen_video(){
+    video_fullscreen = false;
+    document.getElementById("fullscreen_video_black_background").remove();
+    fullscreen_restore[0].style.cssText = fullscreen_restore[1];
+    document.documentElement.style.overflow = fullscreen_restore[2];
 }
 
 // Only the fullscreen element's subtree is rendered, so move the subtitles into it
@@ -393,6 +398,9 @@ document.addEventListener("fullscreenchange", function(){
     }
     else{
         document.body.appendChild(subtitle_element);
+    }
+    if(!fullscreen_element && video_fullscreen){
+        exit_fullscreen_video();
     }
 });
 
@@ -417,34 +425,31 @@ shadow_root.getElementById("subtitle_upload_button").addEventListener("click", f
             else{
                 throw new Error("Request failed");
             }
-        }).then((blob) => {
-            if(blob.type == "application/zip"){
-                blob.arrayBuffer().then(buffer => {
-                    var zip = new JSZip();
-                    zip.loadAsync(buffer).then(function(zip){
-                        var files = Object.entries(zip.files);
-                        var subtitle_file = null;
-                        for(var i = 0; i < files.length; i++){
-                            var file = files[i][1];
-                            var filename = file.name;
-                            var extension = filename.split(".");
-                            extension = extension[extension.length-1];
-                            if(extension == "srt" || extension == "vtt"){
-                                subtitle_file = file;
-                                break;
-                            }
+        }).then(blob => blob.arrayBuffer()).then(buffer => {
+            // Detect zips by their "PK" signature: servers label them with various content types
+            var signature = new Uint8Array(buffer.slice(0, 2));
+            if(signature[0] == 0x50 && signature[1] == 0x4B){
+                var zip = new JSZip();
+                return zip.loadAsync(buffer).then(function(zip){
+                    var files = Object.entries(zip.files);
+                    var subtitle_file = null;
+                    for(var i = 0; i < files.length; i++){
+                        var file = files[i][1];
+                        var filename = file.name;
+                        var extension = filename.split(".");
+                        extension = extension[extension.length-1];
+                        if(extension == "srt" || extension == "vtt"){
+                            subtitle_file = file;
+                            break;
                         }
-                        zip.file(subtitle_file.name).async("string").then(text => {
-                            parse_subtitles(text);
-                        });
-                    });
+                    }
+                    if(subtitle_file == null) throw new Error("No .srt or .vtt file in zip");
+                    return subtitle_file.async("string");
                 });
             }
-            else{
-                blob.text().then(text => {
-                    parse_subtitles(text);
-                });
-            }
+            return new TextDecoder().decode(buffer);
+        }).then(text => {
+            parse_subtitles(text);
         }).catch((error) => {
             shadow_root.getElementById("upload_error_message").textContent = error;
         });
@@ -465,7 +470,7 @@ function load_subtitle_file(){
         parse_subtitles(event.target.result);
     }
     file_reader.onerror = function(event){
-        shadow_root.getElementById("upload_error_message").textContent = event;
+        shadow_root.getElementById("upload_error_message").textContent = file_reader.error;
     }
     file_reader.readAsText(subtitle_file);
 }
@@ -476,11 +481,12 @@ shadow_root.getElementById("subtitle_file_input").addEventListener("change", fun
 });
 
 shadow_root.getElementById("subtitle_offset_input").addEventListener("input", function(){
-    subtitle_offset = parseFloat(shadow_root.getElementById("subtitle_offset_input").value);
+    // An empty or half-typed field ("-") reads as NaN, which would hide every cue
+    subtitle_offset = parseFloat(shadow_root.getElementById("subtitle_offset_input").value) || 0;
 });
 
 shadow_root.getElementById("subtitle_offset_top_input").addEventListener("input", function(){
-    subtitle_offset_top = parseFloat(shadow_root.getElementById("subtitle_offset_top_input").value);
+    subtitle_offset_top = parseFloat(shadow_root.getElementById("subtitle_offset_top_input").value) || 0;
 });
 
 shadow_root.getElementById("subtitle_font_size").addEventListener("input", function(){
