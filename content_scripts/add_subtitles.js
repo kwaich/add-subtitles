@@ -410,6 +410,9 @@ document.addEventListener("fullscreenchange", function(){
 });
 
 update_video_elements_list();
+// A single candidate is unambiguous: select it so subtitles show without touching the list
+var video_list_items = shadow_root.querySelectorAll(".video_list_item");
+if(video_list_items.length == 1) video_list_items[0].click();
 shadow_root.getElementById("refresh_video_list").addEventListener("click", function(){
     update_video_elements_list();
 });
