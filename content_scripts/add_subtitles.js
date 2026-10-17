@@ -276,21 +276,20 @@ setInterval(function(){
         normal_video_height = the_video_element.offsetHeight;
     }
     var font_scale = normal_video_height ? the_video_element.offsetHeight/normal_video_height : 1;
-    var found = -1;
+    // Every active cue, not just the first, like the native track used in fullscreen:
+    // end is exclusive and the earliest cue goes on the bottom line
+    var active = [];
     for(var i = 0; i < subtitles.length; i++){
-        if(subtitles[i].begin+subtitle_offset <= t && subtitles[i].end+subtitle_offset >= t){
-            found = i;
-            break;
+        if(subtitles[i].begin+subtitle_offset <= t && subtitles[i].end+subtitle_offset > t){
+            active.unshift(i);
         }
     }
-    if(found == -1){
-        subtitle_element.textContent = "";
-    }
-    else{
-        subtitle_element.innerHTML = "";
-        for(var i = 0; i < subtitles[found].text.length; i++){
+    subtitle_element.innerHTML = "";
+    for(var a = 0; a < active.length; a++){
+        var cue_text = subtitles[active[a]].text;
+        for(var i = 0; i < cue_text.length; i++){
             var subtitle_line = document.createElement("div");
-            subtitle_line.innerHTML = allow_tags(xss(subtitles[found].text[i]), allowed_html_tags);
+            subtitle_line.innerHTML = allow_tags(xss(cue_text[i]), allowed_html_tags);
             subtitle_line.className = "subtitle_line";
             subtitle_line.style.cssText = "font-family: "+subtitle_font+
                 ";font-size: "+subtitle_font_size*font_scale+
