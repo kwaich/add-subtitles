@@ -356,7 +356,8 @@ function parse_subtitles(subs){
     subs = subs.split(/\n\s*\n/);
 
     for(var i = 0; i < subs.length; i++){
-        var s = subs[i].split("\n");
+        // trim: the file's trailing newline would otherwise add an empty line to the last cue
+        var s = subs[i].trim().split("\n");
         if(s.length <= 1) continue;
         var pos = s[0].indexOf(" --> ") > 0 ? 0 : (s[1].indexOf(" --> ") > 0 ? 1 : -1);
         if(pos <= -1) continue;
